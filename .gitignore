@@ -111,6 +111,8 @@ develop-eggs/
 # ==============================
 # Jupyter Notebook
 # ==============================
-.ipynb_checkpoints/
-# Temporary error files
+.ipynb_checkpoints/error.txt
+
+error.txt
+
 error.txt

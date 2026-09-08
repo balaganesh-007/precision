@@ -18,9 +18,11 @@ class BehaviorAnalyzer(BaseModule):
         if not os.path.exists(filepath):
             return findings
 
-        if format == 'ONNX':
+        normalized_format = (format or "").upper()
+
+        if normalized_format == 'ONNX':
             findings.extend(self._scan_onnx_graph(filepath))
-        elif format == 'SAFETENSORS':
+        elif normalized_format == 'SAFETENSORS':
             findings.append({
                 "severity": "INFO",
                 "module": self.name,
@@ -35,7 +37,7 @@ class BehaviorAnalyzer(BaseModule):
                     "graph_included": False
                 }
             })
-        elif format == 'PYTORCH':
+        elif normalized_format in {'PYTORCH', 'PTH', 'PT'}:
             findings.append({
                 "severity": "INFO",
                 "module": self.name,
@@ -46,10 +48,10 @@ class BehaviorAnalyzer(BaseModule):
                 ),
                 "layer_name": None,
                 "evidence": {
-                    "format": "PYTORCH"
+                    "format": format
                 }
             })
-            
+
         return findings
 
     def _scan_onnx_graph(self, filepath: str) -> List[Dict[str, Any]]:
@@ -57,11 +59,12 @@ class BehaviorAnalyzer(BaseModule):
         try:
             import onnx
             import numpy as np
-            
+            from onnx import numpy_helper
+
             # Load ONNX model structure statically
             model = onnx.load(filepath)
             graph = model.graph
-            
+
             # 1. Scan for custom operators / non-standard domains
             custom_nodes = []
             for node in graph.node:
@@ -72,7 +75,7 @@ class BehaviorAnalyzer(BaseModule):
                         "op_type": node.op_type,
                         "domain": domain
                     })
-            
+
             if custom_nodes:
                 findings.append({
                     "severity": "HIGH",
@@ -99,7 +102,6 @@ class BehaviorAnalyzer(BaseModule):
                 # Biases are typically 1D tensors, often containing "bias" in their name
                 if "bias" in name.lower() or len(initializer.dims) == 1:
                     try:
-                        from onnx import numpy_helper
                         bias_arr = numpy_helper.to_array(initializer)
                         if len(bias_arr) > 0:
                             # Filter out inf/nan which are handled by weight engine
@@ -107,7 +109,7 @@ class BehaviorAnalyzer(BaseModule):
                             if len(clean_biases) > 1:
                                 max_bias = float(np.max(np.abs(clean_biases)))
                                 std_bias = float(np.std(clean_biases))
-                                
+
                                 # Flag if standard deviation or absolute bias is extremely high
                                 # (e.g., bias magnitude > 1000 in a normal scale model)
                                 if max_bias > 1000.0 or std_bias > 500.0:
@@ -145,5 +147,5 @@ class BehaviorAnalyzer(BaseModule):
                 "layer_name": None,
                 "evidence": {"error": str(e)}
             })
-            
+
         return findings
