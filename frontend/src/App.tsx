@@ -178,19 +178,25 @@ export const App: React.FC = () => {
               <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '12px', lineHeight: '1.5' }}>
                 Four safe demonstration target models are pre-generated inside the <code style={{ color: 'var(--accent-cyan)' }}>test_models/</code> directory:
               </p>
+
               <ul style={{ fontSize: '13px', paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '8px', color: 'var(--text-secondary)' }}>
+                
                 <li>
                   <strong style={{ color: 'var(--text-primary)' }} className="mono">clean_model.onnx</strong>: Standard network weights. (Result: <span style={{ color: 'var(--accent-green)' }}>CLEAN</span>)
                 </li>
+
                 <li>
                   <strong style={{ color: 'var(--text-primary)' }} className="mono">stego_model.onnx</strong>: Embeds safe signature marker <code style={{ color: 'var(--accent-cyan)' }}>"STEGO_DEMO_MARKER_2026"</code>. (Result: <span style={{ color: 'var(--accent-red)' }}>HIGH RISK</span>)
                 </li>
+
                 <li>
-                  <strong style={{ color: 'var(--text-primary)' }} className="mono">anomalous_model.onnx</strong>: Contains Inf, NaN, and outlier weights. (Result: <span style={{ color: 'var(--accent-orange)' }}>SUSPICIOUS / HIGH RISK</span>)
+                  <strong style={{ color: 'var(--text-primary)' }} className="mono">anomalous_model.onnx</strong>: Contains Inf, NaN, and outlier weights. (Result: <span style={{ color: 'var(--accent-red)' }}>HIGH RISK</span>)
                 </li>
+
                 <li>
-                  <strong style={{ color: 'var(--text-primary)' }} className="mono">unsafe_pickle.pth</strong>: Harmless pickle import structure reference. (Result: <span style={{ color: 'var(--accent-red)' }}>HIGH RISK</span>)
+                  <strong style={{ color: 'var(--text-primary)' }} className="mono">unsafe_pickle.pth</strong>: Contains a suspicious pickle import structure reference. (Result: <span style={{ color: 'var(--accent-orange)' }}>SUSPICIOUS</span>)
                 </li>
+
               </ul>
             </div>
           </div>
@@ -220,4 +226,5 @@ export const App: React.FC = () => {
     </div>
   );
 };
+
 export default App;
