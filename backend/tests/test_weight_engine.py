@@ -51,5 +51,5 @@ def test_stego_model_fails_stego_scans():
     assert len(findings) > 0
     critical_findings = [f for f in findings if f["severity"] == "CRITICAL"]
     assert len(critical_findings) == 1
-    assert "Steganographic Marker Detected" in critical_findings[0]["title"]
+    assert "Hidden Payload Marker Detected" in critical_findings[0]["title"]
     assert critical_findings[0]["evidence"]["marker_found"] == "STEGO_DEMO_MARKER_2026"
