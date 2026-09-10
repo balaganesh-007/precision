@@ -176,6 +176,97 @@ class WeightEngine(BaseModule):
 
         return findings
 
+    def _analyze_correlations(
+        self,
+        tensors: List[tuple]
+    ) -> List[Dict[str, Any]]:
+        """
+        Detect unusually strong correlations between model tensors.
+
+        This is a heuristic signal only. Strong correlation does not
+        prove that a model contains malware or a hidden payload.
+        """
+
+        findings: List[Dict[str, Any]] = []
+
+        # Avoid expensive correlation analysis on tiny tensors.
+        minimum_elements = 32
+
+        # Very high correlation is required before generating a finding.
+        correlation_threshold = 0.995
+
+        for i in range(len(tensors)):
+            name_a, tensor_a = tensors[i]
+
+            array_a = np.asarray(tensor_a)
+
+            if not np.issubdtype(array_a.dtype, np.number):
+                continue
+
+            flat_a = array_a.astype(np.float64, copy=False).ravel()
+
+            if flat_a.size < minimum_elements:
+                continue
+
+            if not np.all(np.isfinite(flat_a)):
+                continue
+
+            for j in range(i + 1, len(tensors)):
+                name_b, tensor_b = tensors[j]
+
+                array_b = np.asarray(tensor_b)
+
+                if not np.issubdtype(array_b.dtype, np.number):
+                    continue
+
+                flat_b = array_b.astype(np.float64, copy=False).ravel()
+
+                # Pearson correlation requires matching vector sizes.
+                if flat_a.size != flat_b.size:
+                    continue
+
+                if flat_b.size < minimum_elements:
+                    continue
+
+                if not np.all(np.isfinite(flat_b)):
+                    continue
+
+                # Constant vectors do not have a meaningful correlation.
+                if np.std(flat_a) == 0 or np.std(flat_b) == 0:
+                    continue
+
+                correlation = float(
+                    np.corrcoef(flat_a, flat_b)[0, 1]
+                )
+
+                if not np.isfinite(correlation):
+                    continue
+
+                if abs(correlation) >= correlation_threshold:
+                    findings.append({
+                        "severity": "MEDIUM",
+                        "module": self.name,
+                        "title": "Unusually Strong Weight Correlation",
+                        "description": (
+                            f"Layers '{name_a}' and '{name_b}' have an "
+                            f"unusually strong weight correlation "
+                            f"(|r|={abs(correlation):.4f}). This may indicate "
+                            "repeated or highly structured weight patterns "
+                            "and should be reviewed as a potential anomaly."
+                        ),
+                        "layer_name": f"{name_a} <-> {name_b}",
+                        "evidence": {
+                            "layer_a": name_a,
+                            "layer_b": name_b,
+                            "correlation": correlation,
+                            "absolute_correlation": abs(correlation),
+                            "tensor_size": int(flat_a.size),
+                            "threshold": correlation_threshold
+                        }
+                    })
+
+        return findings
+
     def _scan_onnx(self, filepath: str) -> List[Dict[str, Any]]:
         findings: List[Dict[str, Any]] = []
 
@@ -203,6 +294,8 @@ class WeightEngine(BaseModule):
 
                 return findings
 
+            correlation_tensors = []
+
             for initializer in initializers:
                 try:
                     name = initializer.name
@@ -215,12 +308,21 @@ class WeightEngine(BaseModule):
 
                     findings.extend(tensor_findings)
 
+                    correlation_tensors.append(
+                        (name, weights)
+                    )
+
                 except Exception as e:
                     logger.warning(
                         "Error parsing tensor %s: %s",
                         initializer.name,
                         e
                     )
+
+            # 5. Check for unusual correlations between tensors
+            findings.extend(
+                self._analyze_correlations(correlation_tensors)
+            )
 
         except Exception as e:
             findings.append({
@@ -270,6 +372,8 @@ class WeightEngine(BaseModule):
 
                     return findings
 
+                correlation_tensors = []
+
                 for name in keys:
                     try:
                         weights = f.get_tensor(name)
@@ -281,12 +385,21 @@ class WeightEngine(BaseModule):
 
                         findings.extend(tensor_findings)
 
+                        correlation_tensors.append(
+                            (name, weights)
+                        )
+
                     except Exception as e:
                         logger.warning(
                             "Error extracting tensor %s: %s",
                             name,
                             e
                         )
+
+                # Check for unusual correlations between tensors
+                findings.extend(
+                    self._analyze_correlations(correlation_tensors)
+                )
 
         except Exception as e:
             findings.append({
