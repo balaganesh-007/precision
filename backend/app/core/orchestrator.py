@@ -2,12 +2,14 @@ import os
 import json
 import datetime
 import logging
+
 from sqlalchemy.orm import Session
 
 from backend.app.models import Scan, Finding, Report, Model
 from backend.app.modules.weight_engine import WeightEngine
 from backend.app.modules.stego_detector import StegoDetector
 from backend.app.modules.behavior_analyzer import BehaviorAnalyzer
+from backend.app.modules.behavior_probe import BehaviorProbe
 from backend.app.utils.pickle_scanner import scan_pytorch_pickle
 from backend.app.core.risk_engine import calculate_risk
 from backend.app.config import settings
@@ -21,7 +23,7 @@ def generate_markdown_report(model: Model, scan: Scan, findings: list) -> str:
 
     report_content = []
 
-    report_content.append(f"# AI Model Security Scan Report")
+    report_content.append("# AI Model Security Scan Report")
     report_content.append(
         f"**Date:** {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC  "
     )
@@ -30,7 +32,7 @@ def generate_markdown_report(model: Model, scan: Scan, findings: list) -> str:
     report_content.append(f"**SHA-256 Hash:** `{model.sha256_hash}`  ")
     report_content.append(f"**File Size:** {model.file_size:,} bytes  \n")
 
-    report_content.append(f"## Security Status Assessment")
+    report_content.append("## Security Status Assessment")
     report_content.append(
         f"- **Risk Classification:** **{scan.risk_classification}**"
     )
@@ -38,7 +40,7 @@ def generate_markdown_report(model: Model, scan: Scan, findings: list) -> str:
         f"- **Risk Score:** **{scan.risk_score}/100**\n"
     )
 
-    report_content.append(f"### Recommendations")
+    report_content.append("### Recommendations")
 
     if scan.risk_classification == "HIGH RISK":
         report_content.append(
@@ -99,7 +101,7 @@ def generate_markdown_report(model: Model, scan: Scan, findings: list) -> str:
             if f.get("evidence"):
 
                 report_content.append(
-                    f"**Evidence Details:**"
+                    "**Evidence Details:**"
                 )
 
                 try:
@@ -121,8 +123,9 @@ def generate_markdown_report(model: Model, scan: Scan, findings: list) -> str:
             )
 
     report_content.append(
-        f"\n*Disclaimer: This is a defensive scanning report based on static analysis. "
-        f"Risk classification is heuristic and does not guarantee absolute safety or threat absence.*"
+        "\n*Disclaimer: This is a defensive scanning report based on static analysis "
+        "and controlled behavioral probing for supported ONNX models. "
+        "Risk classification is heuristic and does not guarantee absolute safety or threat absence.*"
     )
 
     return "\n".join(report_content)
@@ -130,9 +133,11 @@ def generate_markdown_report(model: Model, scan: Scan, findings: list) -> str:
 
 def run_model_scan(db: Session, scan_id: int):
     """
-    Run security scan statically across all modules.
+    Run security scan across all supported analysis modules.
 
-    This runs inside a background thread/task.
+    Static analysis is performed for all supported formats.
+    Controlled behavioral probing is performed for ONNX models only.
+    PyTorch/Pickle files are never executed.
     """
 
     logger.info(
@@ -197,7 +202,6 @@ def run_model_scan(db: Session, scan_id: int):
             return
 
     try:
-
         # Update state to RUNNING
         scan.status = "RUNNING"
         db.commit()
@@ -208,8 +212,9 @@ def run_model_scan(db: Session, scan_id: int):
             model.format or ""
         ).upper()
 
-        # 1. Format-specific scans
-        # Example: static Pickle check for PyTorch format
+        # ============================================================
+        # 1. FORMAT-SPECIFIC SCANS
+        # ============================================================
 
         has_critical_exploit = False
 
@@ -234,18 +239,20 @@ def run_model_scan(db: Session, scan_id: int):
                 for f in pickle_findings
             )
 
-        # 2. Run other analyzers only if no critical exploit
-        # was already found.
-        #
-        # A confirmed pickle-based exploit means the file is unsafe
-        # to process further; deeper static analysis wouldn't change
-        # the verdict.
+        # ============================================================
+        # 2. RUN ANALYZERS
+        # ============================================================
 
         if not has_critical_exploit:
 
             weight_engine = WeightEngine()
             stego_detector = StegoDetector()
             behavior_analyzer = BehaviorAnalyzer()
+            behavior_probe = BehaviorProbe()
+
+            # --------------------------------------------------------
+            # Weight statistics
+            # --------------------------------------------------------
 
             logger.info(
                 "Executing static weight statistics checks..."
@@ -258,6 +265,10 @@ def run_model_scan(db: Session, scan_id: int):
                 )
             )
 
+            # --------------------------------------------------------
+            # Steganography / LSB analysis
+            # --------------------------------------------------------
+
             logger.info(
                 "Executing static LSB steganography checks..."
             )
@@ -268,6 +279,10 @@ def run_model_scan(db: Session, scan_id: int):
                     model.format
                 )
             )
+
+            # --------------------------------------------------------
+            # Static graph / bias behavior analysis
+            # --------------------------------------------------------
 
             logger.info(
                 "Executing static graph behavior/bias checks..."
@@ -280,21 +295,85 @@ def run_model_scan(db: Session, scan_id: int):
                 )
             )
 
+            # --------------------------------------------------------
+            # Controlled behavioral probing
+            #
+            # Only ONNX models are probed.
+            # PyTorch/Pickle files are NOT executed.
+            # --------------------------------------------------------
+
+            if normalized_format == "ONNX":
+
+                logger.info(
+                    "Executing controlled ONNX behavioral probes..."
+                )
+
+                probe_findings = behavior_probe.scan(
+                    model_path
+                )
+
+                # Normalize BehaviorProbe findings to the same
+                # structure used by the rest of the scanner.
+                for f in probe_findings:
+
+                    normalized_finding = {
+                        "severity": f.get(
+                            "severity",
+                            "INFO"
+                        ),
+
+                        "module": "BEHAVIOR",
+
+                        "title": f.get(
+                            "title",
+                            "Behavioral Analysis Finding"
+                        ),
+
+                        "description": f.get(
+                            "description",
+                            "Behavioral analysis produced an observation."
+                        ),
+
+                        "layer_name": f.get(
+                            "layer_name",
+                            f.get("layer")
+                        ),
+
+                        "evidence": f.get(
+                            "evidence"
+                        )
+                    }
+
+                    all_findings.append(
+                        normalized_finding
+                    )
+
+            else:
+
+                logger.info(
+                    "Controlled behavioral probing skipped "
+                    "because model format is not ONNX."
+                )
+
         else:
 
             logger.warning(
                 "Critical pickle exploit detected for Scan ID %s; "
-                "skipping further static analyzers.",
+                "skipping further analyzers.",
                 scan_id,
             )
 
-        # 3. Calculate Risk Score
-        #
+        # ============================================================
+        # 3. CALCULATE RISK SCORE
+        # ============================================================
+
         # calculate_risk() returns a dictionary, not a tuple.
         # The previous code incorrectly unpacked the dictionary,
         # which caused risk_score to become the string "risk_score".
 
-        risk_result = calculate_risk(all_findings)
+        risk_result = calculate_risk(
+            all_findings
+        )
 
         score = int(
             risk_result["risk_score"]
@@ -303,6 +382,14 @@ def run_model_scan(db: Session, scan_id: int):
         risk_level = risk_result["risk_level"]
 
         explanation = risk_result["explanation"]
+
+        # Prevent unused-variable warnings while keeping
+        # the risk engine explanation available for future use.
+        logger.info(
+            "Risk engine result: level=%s explanation=%s",
+            risk_level,
+            explanation
+        )
 
         # Map risk engine levels to UI classifications
         if score >= 40:
@@ -314,7 +401,9 @@ def run_model_scan(db: Session, scan_id: int):
         else:
             classification = "CLEAN"
 
-        # 4. Save findings to Database
+        # ============================================================
+        # 4. SAVE FINDINGS TO DATABASE
+        # ============================================================
 
         db_findings = []
 
@@ -330,7 +419,9 @@ def run_model_scan(db: Session, scan_id: int):
                 evidence=f.get("evidence")
             )
 
-            db.add(db_finding)
+            db.add(
+                db_finding
+            )
 
             db_findings.append(
                 db_finding
@@ -349,7 +440,9 @@ def run_model_scan(db: Session, scan_id: int):
 
         scan.completed_at = datetime.datetime.utcnow()
 
-        # 5. Generate and store Report
+        # ============================================================
+        # 5. GENERATE AND STORE REPORT
+        # ============================================================
 
         report_dir = os.path.join(
             settings.UPLOAD_DIR,
@@ -380,14 +473,18 @@ def run_model_scan(db: Session, scan_id: int):
             encoding="utf-8"
         ) as rf:
 
-            rf.write(report_md)
+            rf.write(
+                report_md
+            )
 
         db_report = Report(
             scan_id=scan.id,
             report_path=report_path
         )
 
-        db.add(db_report)
+        db.add(
+            db_report
+        )
 
         db.commit()
 
