@@ -19,6 +19,7 @@ class BehaviorProbe:
             "ones": 1.0,
             "positive": 0.1,
             "negative": -0.1,
+            "trigger_pattern": 0.1234567,
         }
 
     def _build_probe_input(self, shape, value):
@@ -91,6 +92,7 @@ class BehaviorProbe:
             input_shape = input_meta.shape
 
             probe_results = {}
+            raw_outputs = {}
 
             for probe_name, value in self.probe_values.items():
                 probe_input = self._build_probe_input(
@@ -106,6 +108,8 @@ class BehaviorProbe:
                 )
 
                 output = np.asarray(outputs[0])
+
+                raw_outputs[probe_name] = output
 
                 probe_results[probe_name] = {
                     "shape": list(output.shape),
@@ -144,7 +148,6 @@ class BehaviorProbe:
                         }
                     })
 
-                    # One finding is sufficient for this condition.
                     break
 
             # Check for unusually large finite outputs.
@@ -179,6 +182,73 @@ class BehaviorProbe:
                             "max_abs_output": max_abs_output
                         }
                     })
+
+            # Compare the trigger-pattern output against the baseline probes.
+            if not findings and "trigger_pattern" in raw_outputs:
+                trigger_output = raw_outputs["trigger_pattern"]
+
+                if np.all(np.isfinite(trigger_output)):
+                    baseline_outputs = []
+
+                    for probe_name, output in raw_outputs.items():
+                        if probe_name != "trigger_pattern":
+                            if np.all(np.isfinite(output)):
+                                baseline_outputs.append(output)
+
+                    if baseline_outputs:
+                        baseline_mean = float(
+                            np.mean([
+                                np.mean(output)
+                                for output in baseline_outputs
+                            ])
+                        )
+
+                        trigger_mean = float(
+                            np.mean(trigger_output)
+                        )
+
+                        baseline_std = float(
+                            np.std([
+                                np.mean(output)
+                                for output in baseline_outputs
+                            ])
+                        )
+
+                        difference = abs(
+                            trigger_mean - baseline_mean
+                        )
+
+                        evidence = {
+                            "trigger_probe": "trigger_pattern",
+                            "trigger_mean": trigger_mean,
+                            "baseline_mean": baseline_mean,
+                            "difference": difference,
+                            "baseline_std": baseline_std,
+                        }
+
+                        # Flag only unusually different behavior.
+                        if difference > max(
+                            1.0,
+                            baseline_std * 10.0
+                        ):
+                            findings.append({
+                                "severity": "MEDIUM",
+                                "title": (
+                                    "Input-Specific Behavioral "
+                                    "Deviation Detected"
+                                ),
+                                "description": (
+                                    "The trigger-pattern probe produced "
+                                    "an unusually different output "
+                                    "compared with the baseline probes. "
+                                    "This may indicate input-specific "
+                                    "behavior and requires further "
+                                    "investigation; it does not by itself "
+                                    "prove a backdoor."
+                                ),
+                                "layer": input_name,
+                                "evidence": evidence
+                            })
 
             if not findings:
                 findings.append({
